@@ -4,6 +4,30 @@ import glob
 from pathlib import Path
 
 
+EXCEL_SHEET_NAME_LIMIT = 31
+INVALID_SHEET_NAME_CHARACTERS = ['[', ']', '*', '?', ':', '/', '\\']
+
+
+def _get_worksheet_name(csv_file: Path, used_names: set[str]) -> str:
+    """Return a valid, unique Excel worksheet name for ``csv_file``."""
+    worksheet_name = csv_file.stem[:EXCEL_SHEET_NAME_LIMIT]
+
+    for char in INVALID_SHEET_NAME_CHARACTERS:
+        worksheet_name = worksheet_name.replace(char, '_')
+
+    candidate = worksheet_name
+    suffix_number = 2
+    while candidate.casefold() in used_names:
+        suffix = f"_{suffix_number}"
+        candidate = (
+            f"{worksheet_name[:EXCEL_SHEET_NAME_LIMIT - len(suffix)]}{suffix}"
+        )
+        suffix_number += 1
+
+    used_names.add(candidate.casefold())
+    return candidate
+
+
 def combine_csv_files_to_excel(folder_path: str, output_file_name: str = "combined_data.xlsx") -> None:
     """
     Combines all CSV files in a folder into a single Excel file.
@@ -14,41 +38,28 @@ def combine_csv_files_to_excel(folder_path: str, output_file_name: str = "combin
     output_file_name (str): Name of the output Excel file
     """
 
-    # Convert folder path to Path object for easier handling
     folder_path = Path(folder_path)
 
-    # Check if folder exists
     if not folder_path.exists():
         raise FileNotFoundError(f"Folder '{folder_path}' does not exist.")
 
-    # Find all CSV files in the folder
-    csv_files = list(folder_path.glob("*.csv"))
+    # Sort so that collision suffixes are assigned deterministically.
+    csv_files = sorted(folder_path.glob("*.csv"), key=lambda path: (path.name.casefold(), path.name))
 
     if not csv_files:
         raise FileNotFoundError(f"No CSV files found in '{folder_path}'.")
 
-    # Create Excel writer object
     output_path = folder_path / output_file_name
 
     try:
         with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+            used_worksheet_names = set()
             for csv_file in csv_files:
                 try:
-                    # Read CSV file
                     dataframe = pd.read_csv(csv_file)
-
-                    # Create worksheet name from filename (without extension)
-                    worksheet_name = csv_file.stem
-
-                    # Truncate worksheet name if it exceeds 31 characters
-                    worksheet_name = worksheet_name[:31]
-
-                    # Remove invalid characters for Excel sheet names
-                    invalid_chars = ['[', ']', '*', '?', ':', '/', '\\']
-                    for char in invalid_chars:
-                        worksheet_name = worksheet_name.replace(char, '_')
-
-                    # Write to Excel sheet
+                    worksheet_name = _get_worksheet_name(
+                        csv_file, used_worksheet_names
+                    )
                     dataframe.to_excel(writer, sheet_name=worksheet_name, index=False)
 
                 except Exception as e:
@@ -61,31 +72,14 @@ def combine_csv_files_to_excel(folder_path: str, output_file_name: str = "combin
         raise Exception(f"Error creating Excel file: {e}")
 
 
-
 def main():
-    # Prompt user for input and validate folder path
     folder_path = validate_folder_path(input("Enter the folder path containing CSV files: ").strip())
-
-    # Prompt user for output filename, default to combined_data.xlsx
     output_filename = validate_output_filename(input("Enter the output Excel filename (default: combined_data.xlsx): ").strip())
-
-    # Combine CSV files to Excel
     combine_csv_files_to_excel(folder_path, output_filename)
 
 
 def validate_folder_path(folder_path: str) -> str:
-    """
-    Validates the folder path and raises an exception if it does not exist.
-
-    Args:
-    folder_path (str): The folder path to validate.
-
-    Returns:
-    str: The validated folder path.
-
-    Raises:
-    FileNotFoundError: If the folder does not exist.
-    """
+    """Validate the folder path and return it as a string."""
     folder_path = Path(folder_path)
     if not folder_path.exists():
         raise FileNotFoundError(f"Folder '{folder_path}' does not exist.")
@@ -93,18 +87,11 @@ def validate_folder_path(folder_path: str) -> str:
 
 
 def validate_output_filename(filename: str) -> str:
-    """
-    Validates the output filename and appends .xlsx if it does not have an extension.
-
-    Args:
-    filename (str): The output filename to validate.
-
-    Returns:
-    str: The validated output filename.
-    """
+    """Append .xlsx when the output filename has no extension."""
     if not filename.endswith('.xlsx'):
         filename += '.xlsx'
     return filename
+
 
 if __name__ == "__main__":
     main()
